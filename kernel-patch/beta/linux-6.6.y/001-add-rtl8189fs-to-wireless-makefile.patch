@@ -1,0 +1,10 @@
+--- a/drivers/net/wireless/Makefile
++++ b/drivers/net/wireless/Makefile
+@@ -5,6 +5,7 @@
+ obj-$(CONFIG_WIRELESS_EXT)	+= wext-core.o wext-proc.o wext-spy.o wext-priv.o
+ 
+ obj-$(CONFIG_CFG80211)		+= cfg80211/
++obj-$(CONFIG_RTL8189FS)		+= rtl8189fs/
+ obj-$(CONFIG_LIB80211)		+= lib80211.o
+ obj-$(CONFIG_LIB80211_CRYPT_WEP)	+= lib80211_crypt_wep.o
+ obj-$(CONFIG_LIB80211_CRYPT_CCMP)	+= lib80211_crypt_ccmp.o
