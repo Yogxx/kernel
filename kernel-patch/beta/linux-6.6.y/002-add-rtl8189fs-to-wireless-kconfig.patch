@@ -1,0 +1,9 @@
+--- a/drivers/net/wireless/Kconfig
++++ b/drivers/net/wireless/Kconfig
+@@ -1,4 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0
++source "drivers/net/wireless/rtl8189fs/Kconfig"
++
+ menu "Wireless LAN"
+ 
+ 	depends on !S390
