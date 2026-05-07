@@ -18,7 +18,7 @@ on:
       kernel_source:
         description: "Kernel source repo (owner/repo@branch)"
         required: false
-        default: "unifreq"
+        default: "Yogxx"
 
 env:
   TZ: Asia/Jakarta
