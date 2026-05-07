@@ -1,0 +1,176 @@
+name: Compile Kernel (WiFi 8189fs for S905X)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: "Kernel version"
+        required: false
+        default: "6.6.y"
+      kernel_auto:
+        description: "Auto use latest version in series"
+        required: false
+        default: "true"
+      kernel_sign:
+        description: "Kernel signature/tag suffix"
+        required: false
+        default: "-s905x-wifi"
+      kernel_source:
+        description: "Kernel source repo (owner/repo@branch)"
+        required: false
+        default: "unifreq"
+
+env:
+  TZ: Asia/Jakarta
+
+jobs:
+  compile:
+    runs-on: ubuntu-22.04
+    if: github.event.repository.owner.id == github.event.sender.id || !github.event.sender.id
+    name: Compile kernel ${{ inputs.kernel_version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Free up disk space ────────────────────────────────────────────
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      # ── Inject RTL8189FS driver into kernel-patch ─────────────────────
+      # Karena 8189fs adalah out-of-tree driver, kita inject sourcenya
+      # ke kernel-patch/beta/linux-6.6.y/ sebagai patch files sebelum compile.
+      # ophub action akan apply patch ini ke kernel source tree.
+      - name: Inject RTL8189FS WiFi driver into patch directory
+        run: |
+          set -e
+          echo "[*] Cloning RTL8189FS driver source..."
+          git clone --depth=1 -b rtl8189fs \
+            https://github.com/jwrdegoede/rtl8189ES_linux.git /tmp/8189fs
+
+          PATCH_DIR="kernel-patch/beta/linux-6.6.y"
+          mkdir -p "${PATCH_DIR}"
+
+          echo "[*] Generating driver source patch files..."
+
+          # ── Patch 1: Add entry to wireless/Makefile ──────────────────
+          cat > "${PATCH_DIR}/001-add-rtl8189fs-to-wireless-makefile.patch" << 'PATCH_EOF'
+--- a/drivers/net/wireless/Makefile
++++ b/drivers/net/wireless/Makefile
+@@ -5,6 +5,7 @@
+ obj-$(CONFIG_WIRELESS_EXT)	+= wext-core.o wext-proc.o wext-spy.o wext-priv.o
+
+ obj-$(CONFIG_CFG80211)		+= cfg80211/
++obj-$(CONFIG_RTL8189FS)		+= rtl8189fs/
+ obj-$(CONFIG_LIB80211)		+= lib80211.o
+ obj-$(CONFIG_LIB80211_CRYPT_WEP)	+= lib80211_crypt_wep.o
+ obj-$(CONFIG_LIB80211_CRYPT_CCMP)	+= lib80211_crypt_ccmp.o
+PATCH_EOF
+
+          # ── Patch 2: Add entry to wireless/Kconfig ───────────────────
+          cat > "${PATCH_DIR}/002-add-rtl8189fs-to-wireless-kconfig.patch" << 'PATCH_EOF'
+--- a/drivers/net/wireless/Kconfig
++++ b/drivers/net/wireless/Kconfig
+@@ -1,5 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ menu "Wireless LAN"
++
++source "drivers/net/wireless/rtl8189fs/Kconfig"
+
+ 	depends on !S390
+
+PATCH_EOF
+
+          echo "[*] Generating driver file patches (core, hal, include, os_dep, platform)..."
+
+          # ── Patch 3: Generate patch untuk semua file source driver ────
+          # Masuk ke temp dir dan buat pseudo-patch dengan format git diff
+          cd /tmp
+          mkdir -p fake-kernel/drivers/net/wireless/rtl8189fs
+
+          # Copy semua file driver
+          cp -r 8189fs/{core,hal,include,os_dep,platform} \
+            fake-kernel/drivers/net/wireless/rtl8189fs/ 2>/dev/null || true
+          cp 8189fs/Kconfig \
+            fake-kernel/drivers/net/wireless/rtl8189fs/ 2>/dev/null || true
+          cp 8189fs/Makefile \
+            fake-kernel/drivers/net/wireless/rtl8189fs/ 2>/dev/null || true
+
+          # Init git untuk bisa generate patch
+          cd /tmp/fake-kernel
+          git init -q
+          git config user.email "ci@github"
+          git config user.name "CI"
+          git add drivers/net/wireless/rtl8189fs/
+          git commit -q -m "add rtl8189fs driver"
+
+          # Generate patch dari commit pertama
+          git format-patch --stdout HEAD~1..HEAD \
+            > "$GITHUB_WORKSPACE/${PATCH_DIR}/003-add-rtl8189fs-driver-files.patch"
+
+          echo "[+] Patch files generated:"
+          ls -lh "$GITHUB_WORKSPACE/${PATCH_DIR}/"
+
+      # ── Compile kernel via ophub action ───────────────────────────────
+      - name: Compile the kernel
+        uses: ophub/amlogic-s9xxx-armbian@main
+        with:
+          build_target: kernel
+          kernel_version: ${{ inputs.kernel_version }}
+          kernel_auto: ${{ inputs.kernel_auto }}
+          kernel_sign: ${{ inputs.kernel_sign }}
+          kernel_source: ${{ inputs.kernel_source }}
+          kernel_config: kernel-config/release/stable
+          kernel_patch: kernel-patch/beta
+          auto_patch: true
+
+      # ── Upload compiled kernel to Releases ────────────────────────────
+      - name: Upload kernel to Releases
+        uses: ncipollo/release-action@main
+        if: ${{ env.PACKAGED_STATUS }} == 'success'
+        with:
+          tag: kernel_stable
+          artifacts: ${{ env.PACKAGED_OUTPUTPATH }}/*
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            ## Kernel ${{ inputs.kernel_version }}${{ inputs.kernel_sign }}
+
+            ### Perubahan
+            - ✅ Kernel ${{ inputs.kernel_version }} untuk Amlogic S905X
+            - ✅ Include driver RTL8189FS (WiFi internal HG680P & B860H)
+            - ✅ CONFIG_RTL8189FS=m aktif
+
+            ### Kompatibel dengan STB
+            - FiberHome HG680P (s905x / p212)
+            - ZTE B860H V1 & V2 (s905x)
+
+            ### Cara pakai di OpenWrt
+            Setelah install kernel ini, WiFi internal akan aktif otomatis.
+            Jika belum muncul, coba ganti DTB:
+            - HG680P → `meson-gxl-s905x-p212.dtb`
+            - B860H  → `meson-gxl-s905x-b860h.dtb`
+            (atau fallback ke `p212` jika B860H kernel panic)
+
+      # ── Summary ───────────────────────────────────────────────────────
+      - name: Build Summary
+        run: |
+          echo "## Build Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Kernel version | ${{ inputs.kernel_version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Kernel sign | ${{ inputs.kernel_sign }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Source | ${{ inputs.kernel_source }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| WiFi driver | RTL8189FS (8189fs) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Target STB | HG680P, B860H (S905X) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${{ env.PACKAGED_STATUS }} |" >> $GITHUB_STEP_SUMMARY
