@@ -15,10 +15,6 @@ on:
         description: "Kernel signature/tag suffix"
         required: false
         default: "-s905x-wifi"
-      kernel_source:
-        description: "Kernel source repo owner (e.g. Yogxx)"
-        required: false
-        default: "Yogxx"
 
 env:
   TZ: Asia/Jakarta
@@ -44,64 +40,9 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Inject RTL8189FS WiFi driver patch files
-        run: |
-          set -e
-
-          echo "[*] Cloning RTL8189FS driver source..."
-          git clone --depth=1 -b rtl8189fs \
-            https://github.com/jwrdegoede/rtl8189ES_linux.git /tmp/8189fs
-
-          PATCH_DIR="kernel-patch/beta/linux-6.6.y"
-          mkdir -p "${PATCH_DIR}"
-
-          echo "[*] Generating Makefile patch..."
-          cat > "${PATCH_DIR}/001-add-rtl8189fs-to-wireless-makefile.patch" << 'EOF'
---- a/drivers/net/wireless/Makefile
-+++ b/drivers/net/wireless/Makefile
-@@ -5,6 +5,7 @@
- obj-$(CONFIG_WIRELESS_EXT)	+= wext-core.o wext-proc.o wext-spy.o wext-priv.o
-
- obj-$(CONFIG_CFG80211)		+= cfg80211/
-+obj-$(CONFIG_RTL8189FS)		+= rtl8189fs/
- obj-$(CONFIG_LIB80211)		+= lib80211.o
- obj-$(CONFIG_LIB80211_CRYPT_WEP)	+= lib80211_crypt_wep.o
- obj-$(CONFIG_LIB80211_CRYPT_CCMP)	+= lib80211_crypt_ccmp.o
-EOF
-
-          echo "[*] Generating Kconfig patch..."
-          cat > "${PATCH_DIR}/002-add-rtl8189fs-to-wireless-kconfig.patch" << 'EOF'
---- a/drivers/net/wireless/Kconfig
-+++ b/drivers/net/wireless/Kconfig
-@@ -1,5 +1,7 @@
- # SPDX-License-Identifier: GPL-2.0
- menu "Wireless LAN"
-+
-+source "drivers/net/wireless/rtl8189fs/Kconfig"
-
- 	depends on !S390
-
-EOF
-
-          echo "[*] Generating driver source patch (git format-patch)..."
-          cd /tmp
-          mkdir -p fake-kernel/drivers/net/wireless/rtl8189fs
-          cp -r 8189fs/core 8189fs/hal 8189fs/include 8189fs/os_dep 8189fs/platform \
-            fake-kernel/drivers/net/wireless/rtl8189fs/
-          [ -f 8189fs/Kconfig ] && cp 8189fs/Kconfig fake-kernel/drivers/net/wireless/rtl8189fs/
-          [ -f 8189fs/Makefile ] && cp 8189fs/Makefile fake-kernel/drivers/net/wireless/rtl8189fs/
-
-          cd /tmp/fake-kernel
-          git init -q
-          git config user.email "ci@github"
-          git config user.name "CI"
-          git add drivers/
-          git commit -q -m "add rtl8189fs driver"
-          git format-patch --stdout HEAD~1..HEAD \
-            > "$GITHUB_WORKSPACE/${PATCH_DIR}/003-add-rtl8189fs-driver-files.patch"
-
-          echo "[+] Patch files:"
-          ls -lh "$GITHUB_WORKSPACE/${PATCH_DIR}/"
+      # Driver 8189fs sudah ada di Yogxx/linux-6.6.y (hasil inject sebelumnya)
+      # Patch 001 dan 002 sudah dicommit langsung di kernel-patch/beta/linux-6.6.y/
+      # Tidak perlu generate patch lagi di sini
 
       - name: Compile the kernel
         uses: ophub/amlogic-s9xxx-armbian@main
@@ -110,7 +51,8 @@ EOF
           kernel_version: ${{ inputs.kernel_version }}
           kernel_auto: ${{ inputs.kernel_auto }}
           kernel_sign: ${{ inputs.kernel_sign }}
-          kernel_source: ${{ inputs.kernel_source }}
+          # Pakai fork Yogxx/linux-6.6.y yang sudah include driver rtl8189fs
+          kernel_source: Yogxx
           kernel_config: kernel-config/release/stable
           kernel_patch: kernel-patch/beta
           auto_patch: true
@@ -118,14 +60,13 @@ EOF
       - name: Check compile output
         if: always()
         run: |
-          echo "PACKAGED_STATUS: ${{ env.PACKAGED_STATUS }}"
-          echo "PACKAGED_OUTPUTPATH: ${{ env.PACKAGED_OUTPUTPATH }}"
-          if [ -n "${{ env.PACKAGED_OUTPUTPATH }}" ] && [ -d "${{ env.PACKAGED_OUTPUTPATH }}" ]; then
+          echo "PACKAGED_STATUS=${{ env.PACKAGED_STATUS }}"
+          echo "PACKAGED_OUTPUTPATH=${{ env.PACKAGED_OUTPUTPATH }}"
+          if [ -d "${{ env.PACKAGED_OUTPUTPATH }}" ]; then
             ls -lh "${{ env.PACKAGED_OUTPUTPATH }}/"
           else
-            echo "Output path kosong atau tidak ditemukan"
-            find /opt -name "*.tar.gz" 2>/dev/null | head -20 || true
-            find /builder -name "*.tar.gz" 2>/dev/null | head -20 || true
+            echo "Searching for output files..."
+            find /opt /builder /home/runner/work -name "*.tar.gz" 2>/dev/null | head -20 || true
           fi
 
       - name: Upload kernel to Releases
@@ -141,6 +82,7 @@ EOF
 
             - RTL8189FS WiFi driver included (HG680P & B860H)
             - CONFIG_RTL8189FS=m
+            - Source: Yogxx/linux-6.6.y
             - Target: Amlogic S905X
 
       - name: Build Summary
@@ -151,6 +93,6 @@ EOF
           echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Kernel | ${{ inputs.kernel_version }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Sign | ${{ inputs.kernel_sign }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Source | ${{ inputs.kernel_source }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Source | Yogxx/linux-6.6.y |" >> $GITHUB_STEP_SUMMARY
           echo "| Status | ${{ env.PACKAGED_STATUS }} |" >> $GITHUB_STEP_SUMMARY
           
