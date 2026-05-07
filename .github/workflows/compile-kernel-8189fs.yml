@@ -142,7 +142,7 @@ jobs:
           delete_source: ${{ inputs.delete_source }}
           kernel_toolchain: ${{ inputs.kernel_toolchain }}
           kernel_sign: ${{ inputs.kernel_sign }}
-          kernel_config: kernel-config/release/stable
+          kernel_config: false
           kernel_patch: kernel-patch/beta
           auto_patch: true
           ccache_clear: ${{ inputs.ccache_clear }}
